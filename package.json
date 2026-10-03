@@ -1,0 +1,22 @@
+{
+  "name": "shanti-auto-mobiles",
+  "private": true,
+  "workspaces": [
+    "apps/api",
+    "apps/web"
+  ],
+  "scripts": {
+    "dev": "concurrently -n api,web -c blue,green 'npm run dev -w @sam/api' 'npm run dev -w @sam/web'",
+    "build": "npm run build -w @sam/web && npm run build -w @sam/api",
+    "test": "npm run test -w @sam/api",
+    "test:integration": "node tests/integration.mjs",
+    "format": "prettier --write apps/api/src apps/web/src apps/web/vite.config.ts apps/web/vercel.mjs apps/api/vercel.json apps/web/index.html apps/api/tsconfig.json apps/web/tsconfig.json apps/api/package.json apps/web/package.json tests package.json .prettierrc.json",
+    "format:check": "prettier --check apps/api/src apps/web/src apps/web/vite.config.ts apps/web/vercel.mjs apps/api/vercel.json apps/web/index.html apps/api/tsconfig.json apps/web/tsconfig.json apps/api/package.json apps/web/package.json tests package.json .prettierrc.json",
+    "db:migrate": "npm run migrate -w @sam/api",
+    "db:seed": "npm run seed -w @sam/api"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "prettier": "^3.9.9"
+  }
+}

@@ -1,0 +1,11 @@
+.git
+.local
+.env
+.env.*
+!.env.example
+.vercel
+**/node_modules
+**/dist
+**/*.tsbuildinfo
+*.log
+coverage
