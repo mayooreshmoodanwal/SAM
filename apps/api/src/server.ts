@@ -1,5 +1,6 @@
 import express from 'express';
-import helmet from 'helmet';
+import * as helmetModule from 'helmet';
+const helmet = (helmetModule.default ?? helmetModule) as typeof helmetModule.default;
 import cookieParser from 'cookie-parser';
 import { pool } from './db.js';
 import { authRouter, attachActor } from './auth.js';
