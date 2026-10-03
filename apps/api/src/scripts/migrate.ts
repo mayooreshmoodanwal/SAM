@@ -1,7 +1,15 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { pool } from '../db.js';
+import { Pool } from 'pg';
+
+const connectionString = process.env.DATABASE_URL_UNPOOLED || process.env.DATABASE_URL;
+if (!connectionString) throw new Error('DATABASE_URL_UNPOOLED or DATABASE_URL is required.');
+const databaseHost = new URL(connectionString).hostname;
+if (databaseHost.includes('-pooler.'))
+  throw new Error('Migrations require a direct connection; set DATABASE_URL_UNPOOLED.');
+
+const pool = new Pool({ connectionString, max: 1, connectionTimeoutMillis: 15_000 });
 const dir = join(fileURLToPath(new URL('../../migrations/', import.meta.url)));
 const client = await pool.connect();
 try {

@@ -6,7 +6,7 @@ export const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   max: process.env.VERCEL ? 4 : 15,
   idleTimeoutMillis: 5_000,
-  connectionTimeoutMillis: 5_000,
+  connectionTimeoutMillis: 15_000,
 });
 if (process.env.VERCEL) attachDatabasePool(pool);
 pool.on('error', (error) => console.error('Idle database connection failed:', error));
