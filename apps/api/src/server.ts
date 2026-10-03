@@ -1,6 +1,5 @@
 import express from 'express';
-import * as helmetModule from 'helmet';
-const helmet = (helmetModule.default ?? helmetModule) as typeof helmetModule.default;
+import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
 import { pool } from './db.js';
 import { authRouter, attachActor } from './auth.js';
@@ -14,7 +13,8 @@ import { appOrigin } from './config.js';
 
 const app = express();
 app.disable('x-powered-by');
-app.use(helmet({ contentSecurityPolicy: false }));
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+app.use((helmet as any)({ contentSecurityPolicy: false }));
 app.use(express.json({ limit: '1mb' }));
 app.use(cookieParser());
 app.use('/api', (_req, res, next) => {
