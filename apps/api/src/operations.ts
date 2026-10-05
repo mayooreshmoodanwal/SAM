@@ -84,7 +84,7 @@ operationsRouter.get(
       return res.json({ parts: [], customers: [], vehicles: [], invoices: [], suppliers: [] });
     const [parts, customers, vehicles, invoices, suppliers] = await Promise.all([
       pool.query(
-        "SELECT id,name,sku,oem_number FROM parts WHERE name ILIKE '%'||$1||'%' OR sku ILIKE '%'||$1||'%' OR oem_number ILIKE '%'||$1||'%' OR barcode=$1 LIMIT 6",
+        "SELECT p.id,p.name,p.sku,p.oem_number FROM parts p WHERE p.name ILIKE '%'||$1||'%' OR p.sku ILIKE '%'||$1||'%' OR p.oem_number ILIKE '%'||$1||'%' OR EXISTS(SELECT 1 FROM product_codes pc WHERE pc.part_id=p.id AND pc.normalized_code=$1 AND pc.is_active) ORDER BY CASE WHEN EXISTS(SELECT 1 FROM product_codes pc WHERE pc.part_id=p.id AND pc.normalized_code=$1 AND pc.is_active) THEN 0 ELSE 1 END,p.name LIMIT 6",
         [q],
       ),
       pool.query(

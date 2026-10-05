@@ -9,6 +9,7 @@ import { peopleRouter } from './people.js';
 import { purchaseRouter } from './purchases.js';
 import { billingRouter } from './billing.js';
 import { operationsRouter } from './operations.js';
+import { productCodeRouter } from './product-codes.js';
 import { appOrigin } from './config.js';
 
 const app = express();
@@ -48,6 +49,14 @@ app.use('/api', (req, _res, next) => {
     next(error);
   }
 });
-app.use('/api', catalogRouter, peopleRouter, purchaseRouter, billingRouter, operationsRouter);
+app.use(
+  '/api',
+  productCodeRouter,
+  catalogRouter,
+  peopleRouter,
+  purchaseRouter,
+  billingRouter,
+  operationsRouter,
+);
 app.use(errorHandler);
 export default app;

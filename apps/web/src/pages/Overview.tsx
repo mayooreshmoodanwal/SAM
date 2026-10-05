@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { api, patch, post, rupees, dateTime, financialYearStart, shopDate } from '../api';
 import { Panel, Table, Loading, Message, useData, Badge, Field, Modal } from '../ui';
+import { ScannerSettingsPanel } from '../scanning/ScannerSettings';
 import type { Nav } from '../App';
 export function Dashboard({ navigate, admin }: { navigate: Nav; admin: boolean }) {
   const { data, loading, error } = useData('/dashboard');
@@ -373,6 +374,7 @@ export function Settings({ onPasswordChanged }: { onPasswordChanged: () => void 
           </div>
         </form>
       </Panel>
+      <ScannerSettingsPanel />
       <PasswordForm onDone={onPasswordChanged} />
       <Panel
         title="Staff accounts"

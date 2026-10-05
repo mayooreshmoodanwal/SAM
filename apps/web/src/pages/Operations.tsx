@@ -1,11 +1,13 @@
 import React, { useState } from 'react';
-import { patch, post, rupees, paise, dateTime, shopDate } from '../api';
+import { api, patch, post, rupees, paise, dateTime, shopDate } from '../api';
 import { Panel, Table, Modal, Field, Message, Loading, Badge, useData } from '../ui';
+import { ScanControl } from '../scanning/ScanControl';
 import type { Nav } from '../App';
 export function Warranty({ navigate, admin }: { navigate: Nav; admin: boolean }) {
   const [q, setQ] = useState(''),
     [selected, setSelected] = useState<any>(null),
     [refresh, setRefresh] = useState(0),
+    [scanInvoices, setScanInvoices] = useState<any[] | null>(null),
     { data, loading } = useData('/warranty?q=' + encodeURIComponent(q), refresh);
   return (
     <>
@@ -16,6 +18,31 @@ export function Warranty({ navigate, admin }: { navigate: Nav; admin: boolean })
           <p>Claims linked to the original invoice, part and truck.</p>
         </div>
       </div>
+      <ScanControl
+        context="WARRANTY"
+        enabled={!selected}
+        onResult={async (result) => {
+          const invoices = await api('/parts/' + result.product.id + '/warranty-invoices');
+          setScanInvoices(invoices);
+          return `${result.product.name} identified. Select the original invoice to open a claim.`;
+        }}
+      />
+      {scanInvoices && (
+        <Panel title="Select original invoice for warranty">
+          <Table
+            rows={scanInvoices}
+            columns={[
+              { key: 'invoice_number', label: 'Invoice' },
+              { key: 'part_name', label: 'Part' },
+              { key: 'customer_name', label: 'Customer' },
+              { key: 'registration_number', label: 'Vehicle' },
+              { key: 'created_at', label: 'Sold', render: (r) => dateTime(r.created_at) },
+            ]}
+            onRow={(r) => navigate('invoices/' + r.invoice_id)}
+            empty="No invoice with product warranty was found. Search the original invoice manually."
+          />
+        </Panel>
+      )}
       <div className="filterbar">
         <input
           className="search-input"

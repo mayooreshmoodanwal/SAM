@@ -4,12 +4,15 @@ import { z } from 'zod';
 import { pool, tx, one, audit, HttpError } from './db.js';
 import { wrap, requireAdmin, requireActor } from './http.js';
 import { parseCsv, importHeaders, csvTemplate } from './csv.js';
+import { stringify } from 'csv-stringify/sync';
 import { CsvError } from 'csv-parse';
+import { codeInput, normalizeCode } from './product-code-domain.js';
+import { assignCode, changeLegacyBarcode, conflictMessage } from './product-code-service.js';
 
 export const catalogRouter = Router();
 const parsedImportRow = (values: string[], headers: string[]) => {
   const record = Object.fromEntries(headers.map((h, i) => [h, values[i] || '']));
-  const money = (key: string) => Math.round(Number(record[key]) * 100);
+  const money = (key: string) => Math.round(Number(record[key] || 0) * 100);
   const number = (key: string) => Number(record[key] || 0);
   const taxMode = (record['Tax Mode'] || 'INCLUSIVE').toUpperCase().replaceAll(' ', '_');
   return {
@@ -28,7 +31,25 @@ const parsedImportRow = (values: string[], headers: string[]) => {
     opening_stock: number('Opening Stock'),
     min_stock: number('Minimum Stock'),
     rack: record.Rack || null,
-    barcode: record.Barcode || null,
+    barcode: record.Barcode?.trim() || null,
+    codes: [
+      record.Barcode && {
+        code: record.Barcode,
+        code_type: 'MANUFACTURER_BARCODE',
+        is_primary: true,
+      },
+      record['Alternate Barcode'] && {
+        code: record['Alternate Barcode'],
+        code_type: 'ALTERNATE_BARCODE',
+      },
+      record['QR Identifier'] && {
+        code: record['QR Identifier'],
+        code_type: 'QR_CODE',
+        format: 'QR_CODE',
+      },
+    ]
+      .filter(Boolean)
+      .map((c: any) => ({ ...c, code: normalizeCode(c.code), source: 'IMPORT' })),
   };
 };
 async function validateImport(csv: string) {
@@ -49,15 +70,18 @@ async function validateImport(csv: string) {
   const categoryMap = new Map(categories.map((c) => [c.name.toLowerCase(), c.id]));
   const incoming = parsed.slice(1).map((r) => parsedImportRow(r, headers));
   const skus = incoming.map((r) => r.sku).filter(Boolean);
-  const barcodes = incoming.map((r) => r.barcode).filter(Boolean);
+  const barcodes = incoming.flatMap((r) => r.codes.map((c) => c.code));
   const existing = (await pool.query('SELECT sku FROM parts WHERE sku=ANY($1)', [skus])).rows.map(
     (r) => r.sku,
   );
   const existingBarcodes = (
-    await pool.query('SELECT barcode FROM parts WHERE barcode=ANY($1)', [barcodes])
-  ).rows.map((r) => r.barcode);
+    await pool.query(
+      'SELECT pc.normalized_code barcode,p.name part_name,p.oem_number,p.sku,pc.is_active FROM product_codes pc JOIN parts p ON p.id=pc.part_id WHERE pc.normalized_code=ANY($1)',
+      [barcodes],
+    )
+  ).rows;
   const existingSet = new Set(existing),
-    existingBarcodeSet = new Set(existingBarcodes),
+    existingBarcodeSet = new Map(existingBarcodes.map((r) => [r.barcode, r])),
     seen = new Set<string>(),
     seenBarcodes = new Set<string>();
   const valid: any[] = [],
@@ -89,11 +113,23 @@ async function validateImport(csv: string) {
       return;
     }
     seen.add(row.sku);
-    if (row.barcode && (existingBarcodeSet.has(row.barcode) || seenBarcodes.has(row.barcode))) {
-      duplicates.push({ row: index + 2, sku: row.sku, reason: 'Duplicate barcode' });
-      return;
+    for (const code of row.codes) {
+      const parsedCode = codeInput.safeParse(code);
+      if (!parsedCode.success)
+        errors.push(
+          'Invalid product code: ' + parsedCode.error.issues.map((i) => i.message).join(', '),
+        );
+      if (existingBarcodeSet.has(code.code) || seenBarcodes.has(code.code)) {
+        const owner = existingBarcodeSet.get(code.code);
+        duplicates.push({
+          row: index + 2,
+          sku: row.sku,
+          reason: owner ? conflictMessage(owner) : `Duplicate code in this file: ${code.code}`,
+        });
+        return;
+      }
+      seenBarcodes.add(code.code);
     }
-    if (row.barcode) seenBarcodes.add(row.barcode);
     if (errors.length) invalid.push({ row: index + 2, sku: row.sku, errors });
     else
       valid.push({
@@ -153,10 +189,12 @@ catalogRouter.post(
               row.opening_stock,
               row.min_stock,
               row.rack,
-              row.barcode,
+              null,
             ],
           )
         ).rows[0];
+        for (const code of [...row.codes].sort((a, b) => a.code.localeCompare(b.code)))
+          await assignCode(db, part.id, code, actor.id);
         if (row.opening_stock)
           await db.query(
             `SELECT move_stock($1,'OPENING_STOCK',$2,0,0,'IMPORT',$3,$4,'CSV opening stock')`,
@@ -177,6 +215,7 @@ const partInput = z.object({
   oem_number: z.string().optional().nullable(),
   sku: z.string().min(2),
   barcode: z.string().optional().nullable(),
+  codes: z.array(codeInput).max(30).default([]),
   category_id: z.string().uuid().optional().nullable(),
   subcategory: z.string().optional().nullable(),
   brand: z.string().min(1).default('Ashok Leyland'),
@@ -264,14 +303,42 @@ catalogRouter.get(
     p.rack,p.shelf,p.bin,p.active,p.category_id,c.name category
     FROM parts p LEFT JOIN categories c ON c.id=p.category_id
     WHERE ($1='' OR p.name ILIKE '%'||$1||'%' OR p.short_name ILIKE '%'||$1||'%' OR p.sku ILIKE '%'||$1||'%'
-      OR p.oem_number ILIKE '%'||$1||'%' OR p.barcode=$1
+      OR p.oem_number ILIKE '%'||$1||'%' OR EXISTS(SELECT 1 FROM product_codes pc WHERE pc.part_id=p.id AND pc.normalized_code=$1 AND pc.is_active)
       OR p.name ILIKE '%'||replace($1,' ','%')||'%' OR similarity(p.name,$1)>0.25)
       AND ($2='' OR p.category_id::text=$2) AND ($3<>'true' OR p.active=true)
-    ORDER BY CASE WHEN p.barcode=$1 OR p.sku=$1 OR p.oem_number=$1 THEN 0 ELSE 1 END,
+    ORDER BY CASE WHEN EXISTS(SELECT 1 FROM product_codes pc WHERE pc.part_id=p.id AND pc.normalized_code=$1 AND pc.is_active) THEN 0 WHEN p.sku=$1 OR p.oem_number=$1 THEN 1 ELSE 2 END,
       CASE WHEN $1<>'' THEN similarity(p.name,$1) ELSE 0 END DESC,p.name LIMIT $4 OFFSET $5`,
       [q, category, String(req.query.activeOnly || ''), limit, (page - 1) * limit],
     );
     res.json(rows.rows);
+  }),
+);
+catalogRouter.get(
+  '/parts/export',
+  wrap(async (req, res) => {
+    requireAdmin(req);
+    const rows = (
+      await pool.query(`SELECT p.name,p.sku,p.oem_number,pc.code,pc.code_type,
+    (SELECT code FROM product_codes qr WHERE qr.part_id=p.id AND qr.is_active AND qr.code_type='QR_CODE' ORDER BY qr.is_primary DESC,qr.created_at LIMIT 1) qr_identifier
+    FROM parts p LEFT JOIN product_codes pc ON pc.part_id=p.id AND pc.is_active AND pc.is_primary ORDER BY p.name`)
+    ).rows;
+    res
+      .type('text/csv')
+      .setHeader('Content-Disposition', 'attachment; filename="sam-product-codes.csv"');
+    res.send(
+      stringify(rows, {
+        header: true,
+        escape_formulas: true,
+        columns: {
+          name: 'Part Name',
+          sku: 'SKU',
+          oem_number: 'OEM Number',
+          code: 'Primary Barcode',
+          code_type: 'Barcode Type',
+          qr_identifier: 'QR Identifier',
+        },
+      }),
+    );
   }),
 );
 catalogRouter.get(
@@ -337,7 +404,9 @@ catalogRouter.post(
         const settings = await one(db, 'SELECT default_gst_bps FROM business_settings WHERE id=1');
         input.gst_bps = Number(settings.default_gst_bps);
       }
-      const keys = Object.keys(input).filter((k) => k !== 'opening_stock');
+      const keys = Object.keys(input).filter(
+        (k) => !['opening_stock', 'codes', 'barcode'].includes(k),
+      );
       const values = keys.map((k) => (input as any)[k]);
       const row = (
         await db.query(
@@ -345,6 +414,15 @@ catalogRouter.post(
           values,
         )
       ).rows[0];
+      const codes = [...input.codes];
+      if (input.barcode?.trim())
+        codes.unshift(
+          codeInput.parse({ code: input.barcode, is_primary: !codes.some((c) => c.is_primary) }),
+        );
+      if (codes.filter((c) => c.is_primary).length > 1)
+        throw new HttpError(400, 'Choose only one primary code.');
+      for (const code of codes.sort((a, b) => a.code.localeCompare(b.code)))
+        await assignCode(db, row.id, code, actor.id);
       if (input.opening_stock)
         await db.query(
           `SELECT move_stock($1,'OPENING_STOCK',$2,0,0,'PART',$3,$4,'Opening stock')`,
@@ -364,17 +442,21 @@ catalogRouter.patch(
   '/parts/:id',
   wrap(async (req, res) => {
     const actor = requireAdmin(req),
-      input = partInput.omit({ opening_stock: true }).partial().parse(req.body);
-    const keys = Object.keys(input);
-    if (!keys.length) throw new HttpError(400, 'No changes supplied.');
+      input = partInput.omit({ opening_stock: true, codes: true }).partial().parse(req.body);
+    const keys = Object.keys(input).filter((k) => k !== 'barcode');
+    if (!Object.keys(input).length) throw new HttpError(400, 'No changes supplied.');
     const row = await tx(async (db) => {
       const old = await one(db, 'SELECT * FROM parts WHERE id=$1 FOR UPDATE', [req.params.id]);
-      const updated = (
-        await db.query(
-          `UPDATE parts SET ${keys.map((k, i) => `${k}=$${i + 2}`).join(',')},updated_at=now() WHERE id=$1 RETURNING *`,
-          [req.params.id, ...keys.map((k) => (input as any)[k])],
-        )
-      ).rows[0];
+      const updated = keys.length
+        ? (
+            await db.query(
+              `UPDATE parts SET ${keys.map((k, i) => `${k}=$${i + 2}`).join(',')},updated_at=now() WHERE id=$1 RETURNING *`,
+              [req.params.id, ...keys.map((k) => (input as any)[k])],
+            )
+          ).rows[0]
+        : old;
+      if (input.barcode !== undefined)
+        await changeLegacyBarcode(db, old.id, input.barcode, actor.id);
       if (
         ['purchase_price_paise', 'selling_price_paise', 'mrp_paise'].some(
           (k) => Number(old[k]) !== Number(updated[k]),

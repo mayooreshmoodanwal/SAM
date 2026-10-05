@@ -20,6 +20,16 @@ const saleInput = z.object({
       z.object({
         part_id: z.string().uuid(),
         quantity: z.number().int().safe().positive(),
+        scanned_code_id: z.string().uuid().optional().nullable(),
+        added_via: z
+          .enum([
+            'MANUAL_PRODUCT_SELECTION',
+            'HARDWARE_KEYBOARD',
+            'HARDWARE_HID',
+            'CAMERA',
+            'MANUAL_CODE',
+          ])
+          .default('MANUAL_PRODUCT_SELECTION'),
         discount_paise: z.number().int().safe().min(0).default(0),
       }),
     )
@@ -106,6 +116,8 @@ billingRouter.post(
         quantity: number;
         discountPaise: number;
         total: ReturnType<typeof calculateLine>;
+        scannedCodeId: string | null;
+        addedVia: string;
       }[];
       for (const line of sorted) {
         const part = await one(db, 'SELECT * FROM parts WHERE id=$1 FOR UPDATE', [line.part_id]);
@@ -113,6 +125,13 @@ billingRouter.post(
         const available = Number(part.current_stock) - Number(part.reserved_stock);
         if (line.quantity > available)
           throw new HttpError(409, `Only ${available} units of ${part.name} are available.`);
+        if (line.scanned_code_id) {
+          const code = await one(db, 'SELECT part_id FROM product_codes WHERE id=$1', [
+            line.scanned_code_id,
+          ]);
+          if (code.part_id !== part.id)
+            throw new HttpError(400, 'Scanned code does not belong to this invoice part.');
+        }
         const total = calculateLine({
           quantity: line.quantity,
           ratePaise: Number(part.selling_price_paise),
@@ -124,6 +143,8 @@ billingRouter.post(
           part,
           quantity: line.quantity,
           discountPaise: line.discount_paise,
+          scannedCodeId: line.scanned_code_id || null,
+          addedVia: line.added_via,
           total,
         });
       }
@@ -200,8 +221,8 @@ billingRouter.post(
       for (const s of snapshots) {
         await db.query(
           `INSERT INTO invoice_lines(invoice_id,part_id,part_name,oem_number,sku,hsn,unit,quantity,mrp_paise,
-        rate_paise,cost_paise,tax_mode,gst_bps,discount_paise,taxable_paise,gst_paise,total_paise,warranty_months)
-        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
+        rate_paise,cost_paise,tax_mode,gst_bps,discount_paise,taxable_paise,gst_paise,total_paise,warranty_months,scanned_code_id,added_via)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)`,
           [
             invoice.id,
             s.part.id,
@@ -221,6 +242,8 @@ billingRouter.post(
             s.total.gstPaise,
             s.total.totalPaise,
             s.part.warranty_months,
+            s.scannedCodeId,
+            s.addedVia,
           ],
         );
         await db.query(

@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { api, post, rupees, paise, dateTime } from '../api';
 import { Panel, Table, Modal, Field, Message, Loading, Badge, useData } from '../ui';
+import { ScanControl, scanFailure } from '../scanning/ScanControl';
 import type { Nav } from '../App';
 import { CustomerHistory, VehicleHistory, SupplierHistory, PurchaseHistory } from './RecordHistory';
 export function Customers({ navigate }: { navigate: Nav }) {
@@ -974,10 +975,35 @@ function ReceiveModal({
   onClose: () => void;
   onDone: () => void;
 }) {
-  const [quantities, setQuantities] = useState<Record<string, number>>({}),
+  const [quantities, setQuantitiesState] = useState<Record<string, number>>({}),
     [error, setError] = useState('');
+  const quantityRef = useRef(quantities);
+  const setQuantities = (next: Record<string, number>) => {
+    quantityRef.current = next;
+    setQuantitiesState(next);
+  };
   return (
     <Modal title="Receive goods" onClose={onClose}>
+      <ScanControl
+        context="PURCHASE_RECEIVING"
+        onResult={(result) => {
+          if (!['FOUND', 'OUT_OF_STOCK'].includes(result.status))
+            throw new Error(scanFailure(result));
+          const line = purchase.lines.find(
+            (l: any) =>
+              l.part_id === result.product.id &&
+              Number(l.quantity_ordered) >
+                Number(l.quantity_received) + (quantityRef.current[l.id] || 0),
+          );
+          if (!line)
+            throw new Error(
+              'This product has no remaining quantity on this purchase. Check the purchase order.',
+            );
+          const quantity = (quantityRef.current[line.id] || 0) + 1;
+          setQuantities({ ...quantityRef.current, [line.id]: quantity });
+          return `${result.product.name} — receive ${quantity}. Save to record stock.`;
+        }}
+      />
       <form
         onSubmit={async (e) => {
           e.preventDefault();

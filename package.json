@@ -8,14 +8,17 @@
   "scripts": {
     "dev": "concurrently -n api,web -c blue,green 'npm run dev -w @sam/api' 'npm run dev -w @sam/web'",
     "build": "npm run build -w @sam/web && npm run build -w @sam/api",
-    "test": "npm run test -w @sam/api",
+    "test": "npm run test -w @sam/api && node --import tsx --test apps/web/src/scanning/core.test.ts",
     "test:integration": "node tests/integration.mjs",
-    "format": "prettier --write apps/api/src apps/web/src apps/web/vite.config.ts apps/web/vercel.mjs apps/api/vercel.json apps/web/index.html apps/api/tsconfig.json apps/web/tsconfig.json apps/api/package.json apps/web/package.json tests package.json .prettierrc.json",
-    "format:check": "prettier --check apps/api/src apps/web/src apps/web/vite.config.ts apps/web/vercel.mjs apps/api/vercel.json apps/web/index.html apps/api/tsconfig.json apps/web/tsconfig.json apps/api/package.json apps/web/package.json tests package.json .prettierrc.json",
+    "test:scanner-qa": "node tests/run-scanner-qa.mjs",
+    "format": "prettier --write apps/api/src apps/web/src apps/web/vite.config.ts apps/web/vercel.json apps/api/vercel.json apps/web/index.html apps/api/tsconfig.json apps/web/tsconfig.json apps/api/package.json apps/web/package.json tests package.json .prettierrc.json",
+    "format:check": "prettier --check apps/api/src apps/web/src apps/web/vite.config.ts apps/web/vercel.json apps/api/vercel.json apps/web/index.html apps/api/tsconfig.json apps/web/tsconfig.json apps/api/package.json apps/web/package.json tests package.json .prettierrc.json",
     "db:migrate": "npm run migrate -w @sam/api",
-    "db:seed": "npm run seed -w @sam/api"
+    "db:seed": "npm run seed -w @sam/api",
+    "db:prune-scans": "npm run prune-scans -w @sam/api"
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
     "concurrently": "^8.2.2",
     "prettier": "^3.9.9"
   }

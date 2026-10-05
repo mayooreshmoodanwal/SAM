@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { api } from './api';
 export class ErrorBoundary extends React.Component<
   { children: React.ReactNode },
@@ -118,24 +118,30 @@ export function Modal({
   onClose: () => void;
   children: React.ReactNode;
 }) {
+  const backdrop = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const fn = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (
+        e.key === 'Escape' &&
+        Array.from(document.querySelectorAll('.modal-backdrop')).at(-1) === backdrop.current
+      )
+        onClose();
     };
     window.addEventListener('keydown', fn);
     return () => window.removeEventListener('keydown', fn);
   }, [onClose]);
   return (
     <div
+      ref={backdrop}
       className="modal-backdrop"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="modal">
+      <div className="modal" role="dialog" aria-modal="true" aria-label={title}>
         <div className="modal-head">
           <h2>{title}</h2>
-          <button className="icon-button" onClick={onClose}>
+          <button type="button" aria-label="Close dialog" className="icon-button" onClick={onClose}>
             ×
           </button>
         </div>

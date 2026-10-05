@@ -3,7 +3,10 @@ import { api, post, rupees, paise, dateTime } from '../api';
 import { Panel, Table, Modal, Field, Message, Loading, Badge, useData } from '../ui';
 import type { Nav } from '../App';
 
-type CartLine = { part: any; quantity: number; discount: string };
+import { addCartProduct, type CartLine, type Scan } from '../scanning/core';
+import { ScanControl, scanFailure } from '../scanning/ScanControl';
+import { AssignCodeModal } from '../scanning/ProductCodeManager';
+import { NewPart } from './Inventory';
 export function Billing({
   navigate,
   admin,
@@ -16,7 +19,7 @@ export function Billing({
   const [search, setSearch] = useState(''),
     [results, setResults] = useState<any[]>([]),
     [highlight, setHighlight] = useState(0);
-  const [cart, setCart] = useState<CartLine[]>([]),
+  const [cart, setCartState] = useState<CartLine[]>([]),
     [customerId, setCustomerId] = useState(''),
     [vehicleId, setVehicleId] = useState('');
   const [customerQ, setCustomerQ] = useState(''),
@@ -33,6 +36,25 @@ export function Billing({
     [showCustomer, setShowCustomer] = useState(false),
     [showPayment, setShowPayment] = useState(false),
     [creditOverride, setCreditOverride] = useState(false);
+  const cartRef = useRef(cart);
+  const setCart = (next: CartLine[] | ((value: CartLine[]) => CartLine[])) => {
+    const value = typeof next === 'function' ? next(cartRef.current) : next;
+    cartRef.current = value;
+    setCartState(value);
+  };
+  const [unknown, setUnknown] = useState<Scan | null>(null),
+    [assigning, setAssigning] = useState(false),
+    [createFromScan, setCreateFromScan] = useState(false),
+    [scanning, setScanning] = useState(false);
+  const categories = useData('/categories');
+  const [compatPrompt, setCompatPrompt] = useState<{
+    name: string;
+    vehicle: string;
+    resolve: (value: boolean) => void;
+  } | null>(null);
+  const compatRef = useRef(compatPrompt);
+  compatRef.current = compatPrompt;
+  useEffect(() => () => compatRef.current?.resolve(false), []);
   const inputRef = useRef<HTMLInputElement>(null),
     initialHandled = useRef('');
   useEffect(() => {
@@ -43,7 +65,7 @@ export function Billing({
     if (params.get('customer')) setCustomerId(params.get('customer')!);
     if (params.get('vehicle')) setVehicleId(params.get('vehicle')!);
     api('/parts/' + partId)
-      .then((part) => addPart(part))
+      .then((part) => selectPart(part))
       .catch(() => {});
   }, [initialPartId]);
   useEffect(() => {
@@ -81,6 +103,7 @@ export function Billing({
       setQuote(null);
       return;
     }
+    let live = true;
     const timer = setTimeout(
       () =>
         post('/sales/quote', {
@@ -92,11 +115,18 @@ export function Billing({
           invoice_discount_paise: paise(invoiceDiscount),
           payments: [],
         })
-          .then(setQuote)
-          .catch((e) => setMessage(e.message)),
+          .then((value) => {
+            if (live) setQuote(value);
+          })
+          .catch((e) => {
+            if (live) setMessage(e.message);
+          }),
       150,
     );
-    return () => clearTimeout(timer);
+    return () => {
+      live = false;
+      clearTimeout(timer);
+    };
   }, [cart, invoiceDiscount]);
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -120,30 +150,22 @@ export function Billing({
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
   }, []);
-  function addPart(part: any) {
+  function addPart(part: any, meta?: { codeId: string; source: Scan['source'] }) {
+    const result = addCartProduct(cartRef.current, part, meta);
+    setCart(result.cart);
     setMessage('');
-    setCart((current) => {
-      const found = current.find((l) => l.part.id === part.id);
-      if (found) {
-        if (
-          found.quantity + 1 >
-          Number(part.available_stock ?? part.current_stock - part.reserved_stock)
-        ) {
-          setMessage(`Only ${part.available_stock} units available.`);
-          return current;
-        }
-        return current.map((l) => (l.part.id === part.id ? { ...l, quantity: l.quantity + 1 } : l));
-      }
-      if (Number(part.available_stock ?? part.current_stock - part.reserved_stock) < 1) {
-        setMessage('This part is out of stock.');
-        return current;
-      }
-      return [...current, { part, quantity: 1, discount: '0' }];
-    });
     setSearch('');
     setResults([]);
     setHighlight(0);
-    inputRef.current?.focus();
+    return `${part.name} — Qty ${result.quantity}${Number(part.available_stock) <= Math.max(Number(part.min_stock), Number(part.reorder_level)) ? ` · Low stock: ${part.available_stock} available` : ''}`;
+  }
+  function selectPart(part: any) {
+    try {
+      addPart(part);
+      inputRef.current?.focus();
+    } catch (e: any) {
+      setMessage(e.message);
+    }
   }
   const paid = payments.reduce((n, p) => n + p.amount_paise, 0),
     due = Math.max(0, Number(quote?.totals?.totalPaise || 0) - paid);
@@ -157,6 +179,7 @@ export function Billing({
       )
     : 0;
   async function save() {
+    if (scanning) return setMessage('Wait for the current scan to finish.');
     if (!cart.length) return setMessage('Add at least one part.');
     setBusy(true);
     setMessage('');
@@ -168,6 +191,8 @@ export function Billing({
           part_id: l.part.id,
           quantity: l.quantity,
           discount_paise: paise(l.discount),
+          scanned_code_id: l.scanned_code_id,
+          added_via: l.added_via,
         })),
         invoice_discount_paise: paise(invoiceDiscount),
         payments,
@@ -196,6 +221,124 @@ export function Billing({
           <span>F8 Save</span>
         </div>
       </div>
+      <ScanControl
+        context="BILLING"
+        enabled={!busy && !showCustomer && !showPayment}
+        vehicleId={vehicleId}
+        onPendingChange={setScanning}
+        onUnknown={setUnknown}
+        onResult={async (result, scan) => {
+          if (result.status !== 'FOUND') throw new Error(scanFailure(result));
+          if (result.product.compatible === false) {
+            const allowed = await new Promise<boolean>((resolve) =>
+              setCompatPrompt({
+                name: result.product.name,
+                vehicle: result.product.registration_number || 'the selected vehicle',
+                resolve,
+              }),
+            );
+            setCompatPrompt(null);
+            if (!allowed) return 'Part skipped.';
+          }
+          setUnknown(null);
+          return addPart(result.product, { codeId: result.code.id, source: scan.source });
+        }}
+      />
+      {unknown && (
+        <div className="message info">
+          <b>Barcode not recognized</b>
+          <p>
+            <code>{unknown.code}</code>
+          </p>
+          <div className="scanner-actions">
+            <button
+              type="button"
+              className="button outline"
+              onClick={() => {
+                setSearch('');
+                inputRef.current?.focus();
+              }}
+            >
+              Search product
+            </button>
+            {admin && (
+              <>
+                <button type="button" className="button outline" onClick={() => setAssigning(true)}>
+                  Assign to existing product
+                </button>
+                <button
+                  type="button"
+                  className="button outline"
+                  onClick={() => setCreateFromScan(true)}
+                >
+                  Create new product
+                </button>
+              </>
+            )}
+            <button type="button" className="button outline" onClick={() => setUnknown(null)}>
+              Scan again
+            </button>
+          </div>
+        </div>
+      )}
+      {assigning && unknown && (
+        <AssignCodeModal
+          code={unknown.code}
+          onClose={() => setAssigning(false)}
+          onDone={() => {
+            setAssigning(false);
+            setUnknown(null);
+            setMessage('Code assigned. Scan it again to add the product to this invoice.');
+          }}
+        />
+      )}
+      {createFromScan && unknown && (
+        <NewPart
+          categories={categories.data || []}
+          initialCode={unknown.code}
+          onClose={() => setCreateFromScan(false)}
+          onDone={() => {
+            setCreateFromScan(false);
+            setUnknown(null);
+            setMessage('Product created. Scan its code to add it to this invoice.');
+          }}
+        />
+      )}
+      {compatPrompt && (
+        <Modal
+          title="Compatibility warning"
+          onClose={() => {
+            compatPrompt.resolve(false);
+            setCompatPrompt(null);
+          }}
+        >
+          <p>
+            {compatPrompt.name} is not currently mapped as compatible with {compatPrompt.vehicle}.
+          </p>
+          <div className="form-actions">
+            <button
+              type="button"
+              className="button outline"
+              onClick={() => {
+                compatPrompt.resolve(false);
+                setCompatPrompt(null);
+              }}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="button primary"
+              onClick={() => {
+                compatPrompt.resolve(true);
+                setCompatPrompt(null);
+              }}
+            >
+              Add anyway
+            </button>
+          </div>
+        </Modal>
+      )}
       <div className="billing-layout">
         <div className="billing-main">
           <Panel title="Find a part">
@@ -220,7 +363,7 @@ export function Billing({
                   }
                   if (e.key === 'Enter' && results[highlight]) {
                     e.preventDefault();
-                    addPart(results[highlight]);
+                    selectPart(results[highlight]);
                   }
                 }}
               />
@@ -239,7 +382,7 @@ export function Billing({
                   <button
                     key={p.id}
                     className={i === highlight ? 'selected' : ''}
-                    onClick={() => addPart(p)}
+                    onClick={() => selectPart(p)}
                   >
                     <span>
                       <b>{p.name}</b>
@@ -261,7 +404,7 @@ export function Billing({
           </Panel>
           <Panel title={`Invoice items · ${cart.length}`}>
             <div className="table-wrap">
-              <table>
+              <table className="cart-table">
                 <thead>
                   <tr>
                     <th>Part / OEM</th>
@@ -496,7 +639,7 @@ export function Billing({
             <button
               id="save-invoice"
               className="button primary wide save-button"
-              disabled={busy || !cart.length}
+              disabled={busy || scanning || !cart.length}
               onClick={save}
             >
               {busy ? 'Saving invoice…' : 'Save invoice  F8'}
@@ -872,6 +1015,16 @@ function ReturnModal({
     [error, setError] = useState('');
   return (
     <Modal title="Sales return" onClose={onClose}>
+      <ScanControl
+        context="SALES_RETURN"
+        onResult={(result) => {
+          const match = data.lines.find((l: any) => l.part_id === result.product.id);
+          if (!match) throw new Error('This product was not on the original invoice.');
+          setLine(match.id);
+          setQty(1);
+          return `${match.part_name} selected for return. Review quantity and condition.`;
+        }}
+      />
       <form
         onSubmit={async (e) => {
           e.preventDefault();

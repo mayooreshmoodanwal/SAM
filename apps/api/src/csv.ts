@@ -26,6 +26,8 @@ export const importHeaders = [
   'Minimum Stock',
   'Rack',
   'Barcode',
+  'Alternate Barcode',
+  'QR Identifier',
 ];
 export function csvTemplate() {
   return importHeaders.join(',') + '\n';

@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { api, post, financialYearLabel } from './api';
+import { ScannerProvider } from './scanning/ScannerProvider';
 import { Message } from './ui';
 import { Dashboard, Reports, Settings } from './pages/Overview';
 import { Billing, InvoiceDetail } from './pages/Billing';
@@ -324,7 +325,9 @@ export default function App() {
             </button>
           </div>
         </header>
-        <main>{page}</main>
+        <main>
+          <ScannerProvider key={user.id}>{page}</ScannerProvider>
+        </main>
       </div>
     </div>
   );

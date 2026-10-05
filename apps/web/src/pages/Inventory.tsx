@@ -1,6 +1,13 @@
 import React, { useState } from 'react';
 import { api, post, patch, rupees, paise, dateTime } from '../api';
 import { Panel, Table, Modal, Field, Message, Loading, Badge, useData } from '../ui';
+import { ScanControl } from '../scanning/ScanControl';
+import {
+  DraftCodes,
+  ProductCodeManager,
+  LabelPrinter,
+  type CodeDraft,
+} from '../scanning/ProductCodeManager';
 import type { Nav } from '../App';
 export function Parts({ navigate, admin }: { navigate: Nav; admin: boolean }) {
   const [q, setQ] = useState(''),
@@ -9,7 +16,9 @@ export function Parts({ navigate, admin }: { navigate: Nav; admin: boolean }) {
     [categoryRefresh, setCategoryRefresh] = useState(0),
     [adding, setAdding] = useState(false),
     [importing, setImporting] = useState(false),
-    [addingCategory, setAddingCategory] = useState(false);
+    [addingCategory, setAddingCategory] = useState(false),
+    [selectedParts, setSelectedParts] = useState<string[]>([]),
+    [printing, setPrinting] = useState(false);
   const { data, loading, error } = useData(
       `/parts?q=${encodeURIComponent(q)}&category=${category}&limit=100`,
       refresh,
@@ -31,12 +40,37 @@ export function Parts({ navigate, admin }: { navigate: Nav; admin: boolean }) {
             <button className="button outline" onClick={() => setImporting(true)}>
               Import CSV
             </button>
+            <a className="button outline" href="/api/parts/export">
+              Export codes CSV
+            </a>
+            <button
+              className="button outline"
+              disabled={!selectedParts.length}
+              onClick={() => setPrinting(true)}
+            >
+              Print labels ({selectedParts.length})
+            </button>
             <button className="button primary" onClick={() => setAdding(true)}>
               ＋ Add part
             </button>
           </div>
         )}
       </div>
+      <ScanControl
+        context="PRODUCT_LOOKUP"
+        enabled={!adding && !importing && !addingCategory && !printing}
+        onResult={(result) => {
+          navigate('parts/' + result.product.id);
+          return result.product.name;
+        }}
+      />
+      {admin && <LegacyCodeConflicts />}
+      {printing && (
+        <LabelPrinter
+          items={selectedParts.map((part_id) => ({ part_id }))}
+          onClose={() => setPrinting(false)}
+        />
+      )}
       <div className="filterbar">
         <input
           className="search-input"
@@ -62,6 +96,30 @@ export function Parts({ navigate, admin }: { navigate: Nav; admin: boolean }) {
           <Table
             rows={data || []}
             columns={[
+              ...(admin
+                ? [
+                    {
+                      key: 'select',
+                      label: 'Labels',
+                      render: (r: any) => (
+                        <label onClick={(e) => e.stopPropagation()}>
+                          <input
+                            type="checkbox"
+                            aria-label={`Select ${r.name} for labels`}
+                            checked={selectedParts.includes(r.id)}
+                            onChange={(e) =>
+                              setSelectedParts(
+                                e.target.checked
+                                  ? [...selectedParts, r.id]
+                                  : selectedParts.filter((id) => id !== r.id),
+                              )
+                            }
+                          />
+                        </label>
+                      ),
+                    },
+                  ]
+                : []),
               { key: 'name', label: 'Part' },
               { key: 'oem_number', label: 'OEM no.' },
               { key: 'sku', label: 'SKU' },
@@ -319,16 +377,31 @@ function ImportParts({ onClose, onDone }: { onClose: () => void; onDone: () => v
     </Modal>
   );
 }
-function NewPart({
+export function NewPart({
   categories,
   onClose,
   onDone,
+  initialCode,
 }: {
+  initialCode?: string;
   categories: any[];
   onClose: () => void;
   onDone: (id: string) => void;
 }) {
   const settings = useData('/settings');
+  const [codes, setCodes] = useState<CodeDraft[]>(
+    initialCode
+      ? [
+          {
+            code: initialCode,
+            code_type: 'MANUFACTURER_BARCODE',
+            format: 'UNKNOWN',
+            source: 'ADMIN_MANUAL',
+            is_primary: true,
+          },
+        ]
+      : [],
+  );
   const [v, setV] = useState<any>({
     name: '',
     sku: '',
@@ -358,6 +431,7 @@ function NewPart({
           e.preventDefault();
           try {
             const part = await post('/parts', {
+              codes,
               name: v.name,
               sku: v.sku,
               oem_number: v.oem_number || null,
@@ -445,6 +519,7 @@ function NewPart({
             </select>
           </Field>
         </div>
+        <DraftCodes codes={codes} onChange={setCodes} />
         <Message>{error}</Message>
         <div className="form-actions">
           <button className="button primary">Save part</button>
@@ -464,6 +539,7 @@ export function PartDetail({ id, navigate, admin }: { id: string; navigate: Nav;
   if (error) return <Message>{error}</Message>;
   const tabs = [
     'Overview',
+    'Codes & Labels',
     'Stock',
     'Compatibility',
     'Purchases',
@@ -525,6 +601,7 @@ export function PartDetail({ id, navigate, admin }: { id: string; navigate: Nav;
             </button>
           ))}
       </div>
+      {tab === 'Codes & Labels' && <ProductCodeManager part={p} admin={admin} />}
       {tab === 'Overview' && (
         <Panel title="Part information">
           <div className="detail-grid">
@@ -1022,7 +1099,8 @@ export function Stock({ navigate, admin }: { navigate: Nav; admin: boolean }) {
     [tab, setTab] = useState('position'),
     [refresh, setRefresh] = useState(0),
     [adjust, setAdjust] = useState(false),
-    [reserve, setReserve] = useState(false);
+    [reserve, setReserve] = useState(false),
+    [scanned, setScanned] = useState<any>(null);
   const stock = useData('/stock?status=' + status, refresh),
     ledger = useData('/stock/ledger', refresh);
   return (
@@ -1044,6 +1122,40 @@ export function Stock({ navigate, admin }: { navigate: Nav; admin: boolean }) {
           </div>
         )}
       </div>
+      <ScanControl
+        context="STOCK_LOOKUP"
+        enabled={!adjust && !reserve}
+        onResult={(result) => {
+          setScanned(result.product);
+          return `${result.product.name}: ${result.product.available_stock} available${result.status === 'DISABLED_CODE' ? ' (code disabled)' : ''}`;
+        }}
+      />
+      {scanned && (
+        <Panel title={scanned.name}>
+          <div className="detail-grid">
+            {[
+              ['OEM', scanned.oem_number],
+              ['Current', scanned.current_stock],
+              ['Available', scanned.available_stock],
+              ['Reserved', scanned.reserved_stock],
+              ['Damaged', scanned.damaged_stock],
+              [
+                'Rack / shelf / bin',
+                [scanned.rack, scanned.shelf, scanned.bin].filter(Boolean).join(' / '),
+              ],
+              ['Selling', rupees(scanned.selling_price_paise)],
+            ].map(([label, value]) => (
+              <div key={label}>
+                <small>{label}</small>
+                <strong>{value || '0'}</strong>
+              </div>
+            ))}
+          </div>
+          <button className="button outline" onClick={() => navigate('parts/' + scanned.id)}>
+            Open product
+          </button>
+        </Panel>
+      )}
       <div className="tabs">
         <button className={tab === 'position' ? 'active' : ''} onClick={() => setTab('position')}>
           Stock position
@@ -1337,4 +1449,28 @@ function AdjustStock({
       </form>
     </Modal>
   );
+}
+
+function LegacyCodeConflicts() {
+  const { data } = useData<any[]>('/product-codes/conflicts');
+  return data?.length ? (
+    <Panel title="Legacy barcode conflicts">
+      <p className="muted">
+        These original values have been preserved. Open the intended product’s Codes & Labels, enter
+        the code, and explicitly confirm the conflict resolution.
+      </p>
+      <Table
+        rows={data}
+        columns={[
+          { key: 'normalized_code', label: 'Code' },
+          { key: 'reason', label: 'Issue' },
+          {
+            key: 'products',
+            label: 'Products',
+            render: (r) => r.products.map((p: any) => p.name + ' / ' + p.sku).join(', '),
+          },
+        ]}
+      />
+    </Panel>
+  ) : null;
 }
