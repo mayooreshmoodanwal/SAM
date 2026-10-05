@@ -101,7 +101,13 @@ export function CodeEntry({
           setDraft(next);
           const result = await validate(next);
           if (!result.available) throw new Error(result.message);
-          return 'Code captured — available to assign.';
+          if (scan.source === 'CAMERA') {
+            await onAdd({ ...next, code: result.code });
+            setDraft(blank);
+            setValidation(null);
+            return `✓ Code ${result.code} captured & added to product.`;
+          }
+          return 'Code captured — click "Add code" or press Enter to assign.';
         }}
       />
       <div className="form-grid">

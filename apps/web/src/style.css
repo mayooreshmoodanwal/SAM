@@ -1040,7 +1040,8 @@ tr.clickable:hover {
     min-height: 0;
   }
   .brand {
-    height: 55px;
+    height: 50px;
+    padding: 0 12px;
   }
   .workspace-label,
   .sidebar-foot {
@@ -1048,18 +1049,36 @@ tr.clickable:hover {
   }
   .sidebar nav {
     display: flex;
-    overflow: auto;
-    padding: 6px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 6px 10px;
+    gap: 6px;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .sidebar nav::-webkit-scrollbar {
+    display: none;
   }
   .nav-item {
     white-space: nowrap;
     width: auto;
-    height: 30px;
+    flex-shrink: 0;
+    height: 34px;
+    padding: 0 14px;
+    font-size: 13px;
+    border-radius: 6px;
+    box-shadow: none;
+  }
+  .nav-item.active {
+    box-shadow: inset 0 -3px #d88b49;
   }
   .topbar {
-    height: 50px;
+    height: 52px;
+    padding: 0 10px;
+    gap: 8px;
   }
   .global-search {
+    flex: 1;
     width: 100%;
     max-width: none;
   }
@@ -1069,10 +1088,12 @@ tr.clickable:hover {
     display: none;
   }
   main {
-    padding: 16px 10px;
+    padding: 14px 10px;
   }
   .page-title {
     align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
   }
   .page-title h1 {
     font-size: 20px;
@@ -1090,16 +1111,68 @@ tr.clickable:hover {
   .detail-grid,
   .form-grid {
     grid-template-columns: 1fr;
+    gap: 12px;
+  }
+  .field {
+    gap: 4px;
+  }
+  .field span {
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .field input,
+  .field select,
+  .field textarea,
+  .cell-input {
+    font-size: 16px;
+    min-height: 42px;
+    padding: 8px 10px;
   }
   .filterbar {
     flex-wrap: wrap;
+    gap: 8px;
   }
   .part-results {
     overflow: auto;
   }
   .part-results button,
   .result-head {
-    min-width: 600px;
+    min-width: 500px;
+  }
+  .modal-backdrop {
+    padding: 8px 4px;
+    align-items: flex-end;
+  }
+  .modal {
+    width: 100%;
+    max-width: 100%;
+    max-height: 94vh;
+    border-radius: 12px 12px 0 0;
+  }
+  .modal-head {
+    padding: 12px 14px;
+  }
+  .modal-head h2 {
+    font-size: 17px;
+  }
+  .modal > form,
+  .modal > p {
+    margin: 12px 10px;
+  }
+  .modal .table-wrap {
+    margin: 8px 0;
+  }
+  .form-actions {
+    margin-top: 14px;
+  }
+  .form-actions .button {
+    width: 100%;
+    min-height: 44px;
+    font-size: 15px;
+    font-weight: 600;
+    display: flex;
+    justify-content: center;
+    align-items: center;
   }
 }
 
@@ -1308,11 +1381,39 @@ summary {
   font-weight: 600;
 }
 @media (max-width: 700px) {
+  .scanner-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
   .scanner-actions .scanner-status {
     width: 100%;
+    margin-bottom: 2px;
+  }
+  .scanner-actions .button {
+    flex: 1 1 calc(50% - 6px);
+    min-width: 120px;
+    min-height: 42px;
+    padding: 9px 12px;
+    font-size: 13px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+  }
+  .scanner-actions .button.primary {
+    flex: 1 1 100%;
+    order: -1;
+    font-weight: 600;
+    font-size: 14px;
+    min-height: 44px;
   }
   .camera-scanner {
     padding: 0;
+  }
+  .camera-view {
+    aspect-ratio: 4/3;
+    max-height: 48vh;
   }
   .code-preview {
     flex-direction: column;
@@ -1323,8 +1424,22 @@ summary {
   }
   .manual-scan {
     flex-wrap: wrap;
+    gap: 8px;
   }
   .manual-scan input {
-    min-width: 65%;
+    width: 100%;
+    min-width: 100%;
+    min-height: 42px;
+  }
+  .manual-scan .button {
+    width: 100%;
+    min-height: 42px;
+  }
+  .draft-code {
+    flex-direction: column;
+    align-items: flex-start;
+    margin: 8px 0;
+    padding: 10px 12px;
+    gap: 6px;
   }
 }
